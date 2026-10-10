@@ -112,6 +112,7 @@ export interface RunPolicy {
   base: string;
   offline: boolean;
   budgetSeconds: number;
+  maxSourceMiB?: number;
   maxWorkers: 3;
   maxRepairs: 3;
 }
@@ -923,6 +924,9 @@ export function renderReport(report: RunReportV3): string {
     `${report.completeness} — ${plain(report.policy.scope)}${report.policy.diff ? ` (diff against ${plain(report.policy.base)})` : ''}`,
     ...status,
     `Run: ${plain(report.runId)}. Mode: ${plain(report.policy.mode)}.`,
+    ...(report.policy.maxSourceMiB === undefined
+      ? []
+      : [`Source admission budget: ${report.policy.maxSourceMiB} MiB.`]),
     timing,
     ...(usage ? [usage] : []),
     `Material gaps: ${gaps.length ? list(gaps) : 'none reported'}.`,

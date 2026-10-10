@@ -6,6 +6,7 @@ import { dirname } from 'node:path';
 import { GROUP_LIMITS, Role, ROLE_LIMITS, Lease, admit, markSupervised, release, total } from './admission';
 import { childEnvironment, executable, runProcess } from './process';
 import { secureDirectory } from './state';
+import { canonicalUnixSocketPath } from './unix-socket';
 export const CONTAINER_SHM_BYTES = 8 * 1024 * 1024;
 export const ISOLATION_POLICY_HASH = sha256(
   canonical({
@@ -106,7 +107,7 @@ export async function dockerEndpoint(
   const requestedSocket = uri.slice('unix://'.length);
   let socket = '';
   try {
-    socket = fs.realpathSync(requestedSocket);
+    socket = canonicalUnixSocketPath(requestedSocket);
   } catch {
     throw new CsoError('ISOLATION_FAILED', 'Pinned local Docker socket is unavailable');
   }
@@ -757,7 +758,7 @@ export class DockerGroup {
     if (spec.readonlyArchiveDirectory) directoryMount(spec.readonlyArchiveDirectory, '/archives', true);
     if (spec.registrySocket) {
       const stat = fs.lstatSync(spec.registrySocket),
-        real = fs.realpathSync(spec.registrySocket);
+        real = canonicalUnixSocketPath(spec.registrySocket);
       if (
         !stat.isSocket() ||
         stat.isSymbolicLink() ||

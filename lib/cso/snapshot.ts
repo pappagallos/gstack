@@ -15,9 +15,10 @@ import {
   MAX_OUTPUT,
 } from './contracts';
 import { childEnvironment, executable, git, redact, runProcess } from './process';
-import { secureDirectory, writeHelperJson, writeJson } from './state';
+import { secureDirectory, writeHelperJson, writeJson, MAX_SNAPSHOT_MANIFEST } from './state';
 import { scan } from '../redact-engine';
 import { atomicWriteSync } from '../fs-atomic';
+import { sourceBudgetMiB } from './source-budget';
 
 const NO_READ_COMPONENTS = new Set([
   '.git',
@@ -57,6 +58,7 @@ const GIT_POINTER_LIMIT = 8192;
 export interface SnapshotCaptureLimits {
   deadlineMs?: number;
   maxEntries?: number;
+  maxSourceMiB?: number;
 }
 
 type BoundPathIdentity = {
@@ -573,6 +575,7 @@ export async function capture(
     snapshot = secureDirectory(join(runDir, 'snapshot')),
     readable = secureDirectory(join(runDir, 'readable')),
     admission = snapshotAdmission(limits),
+    maxSourceMiB = sourceBudgetMiB(limits.maxSourceMiB),
     guard = () => {
       admission.time();
       assertRepositoryIdentity(repository);
@@ -643,8 +646,11 @@ export async function capture(
       const { data, mode } = readStable(repo, path, SOURCE_LIMIT);
       total += data.length;
       guard();
-      if (total > SOURCE_LIMIT)
-        throw new CsoError('MISSING_INPUT', 'Source exceeds the 64 MiB snapshot admission limit');
+      if (total > maxSourceMiB * 1024 * 1024)
+        throw new CsoError(
+          'MISSING_INPUT',
+          `Source exceeds the ${maxSourceMiB} MiB snapshot admission limit`,
+        );
       const entry: SnapshotEntry = {
         path,
         pathId: snapshotPathId(repo, path),
@@ -859,15 +865,10 @@ export async function capture(
     assertAbsent();
     admission.time();
     writeHelperJson(join(runDir, 'sensitive-evidence.json'), sensitiveEvidence);
-    // The manifest contains helper-computed identities and source pathnames but
-    // never source payloads. Persist it exactly in private state: generic
-    // content redaction would silently break the path/hash identity relation.
+    // 파일 목록에는 원문 대신 경로와 식별값만 담긴다. 가림 처리로 경로와 해시 관계가 깨지지 않도록 그대로 저장한다.
     const serialized = JSON.stringify(manifest, null, 2);
-    if (Buffer.byteLength(serialized) + 1 > MAX_OUTPUT)
-      throw new CsoError(
-        'MISSING_INPUT',
-        'Snapshot manifest exceeds the 1 MiB private-state admission limit',
-      );
+    if (Buffer.byteLength(serialized) + 1 > MAX_SNAPSHOT_MANIFEST)
+      throw new CsoError('MISSING_INPUT', 'Snapshot manifest exceeds the 16 MiB metadata admission limit');
     atomicWriteSync(join(runDir, 'snapshot.json'), serialized + '\n', { mode: 0o600 });
     return manifest;
   } catch (e) {

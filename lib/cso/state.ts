@@ -15,6 +15,8 @@ import { redact, sanitizeForJson, sanitizeHelperForJson } from './process';
 import { resolveStateRoot } from '../state-root';
 import { PROCESS_IDENTITY, identityStartedAtMs, processIdentitySource } from './process-identity';
 const MAX_STATE_FILE = 1024 * 1024;
+// 원본 내용이 없는 파일 목록에만 더 큰 한도를 적용한다. 보고서와 제어 입력 한도는 유지한다.
+export const MAX_SNAPSHOT_MANIFEST = 16 * 1024 * 1024;
 
 type ExactStats = Pick<
   fs.BigIntStats,
@@ -814,7 +816,7 @@ export function writeJsonExclusive(path: string, value: unknown): void {
     throw new CsoError('PERSISTENCE_FAILED', 'Private immutable artifact could not be written');
   }
 }
-function readPrivateJson(path: string): unknown {
+function readPrivateJson(path: string, maxBytes = MAX_STATE_FILE): unknown {
   let fd: number | undefined;
   try {
     const before = exactLstat(path);
@@ -823,7 +825,7 @@ function readPrivateJson(path: string): unknown {
       before.isSymbolicLink() ||
       before.nlink !== 1 ||
       before.size <= 0 ||
-      before.size > MAX_STATE_FILE ||
+      before.size > maxBytes ||
       (process.getuid && before.uid !== process.getuid()) ||
       (process.platform !== 'win32' && (before.mode & 0o077) !== 0)
     )
@@ -857,15 +859,21 @@ function readPrivateJson(path: string): unknown {
       } catch {}
   }
 }
-export function readJson(path: string): any {
+function readJsonWithLimit(path: string, maxBytes: number): any {
   try {
     secureDirectory(dirname(path));
-    recoverAtomicNoReplaceJson(path, { label: 'Private immutable artifact', maxBytes: MAX_STATE_FILE });
-    return readPrivateJson(path);
+    recoverAtomicNoReplaceJson(path, { label: 'Private immutable artifact', maxBytes });
+    return readPrivateJson(path, maxBytes);
   } catch (e) {
     if (e instanceof CsoError) throw e;
     throw new CsoError('MISSING_INPUT', 'Private state file is missing or invalid');
   }
+}
+export function readJson(path: string): any {
+  return readJsonWithLimit(path, MAX_STATE_FILE);
+}
+export function readSnapshotJson(path: string): any {
+  return readJsonWithLimit(path, MAX_SNAPSHOT_MANIFEST);
 }
 export const PUBLIC_SOURCE_ROOT = '<REDACTED-internal.user_path>';
 /** A report is public evidence; the real root remains in the private snapshot. */
